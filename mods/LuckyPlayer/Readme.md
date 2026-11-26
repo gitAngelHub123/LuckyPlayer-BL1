@@ -2,7 +2,7 @@
 
 Borderlands GOTY Enhanced mod (willow1 Python SDK).
 
-- Every boss drops a guaranteed legendary (orange) weapon, on top of its normal loot.
+- Every boss drops its own unique weapon (or a legendary if it has none), on top of its normal loot.
 - Every chest that contains weapons drops a legendary weapon on top of it.
 - Movement speed multiplier (1x-3x, default 2x).
 - Jump height multiplier (1x-3x, default 3x).

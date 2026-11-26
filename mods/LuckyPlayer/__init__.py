@@ -42,24 +42,67 @@ def log(msg: str, consola: bool = False) -> None:
 
 
 # ---------------------------------------------------------------- movimiento
-def _aplicar_movimiento(pawn: UObject) -> None:
-    base = pawn.Class.ClassDefaultObject
-    pawn.GroundSpeed = base.GroundSpeed * op_vel.value
-    pawn.JumpZ = base.JumpZ * op_salto.value
-    _estado.update(pawn=pawn, vel=op_vel.value, salto=op_salto.value)
+# Se guarda el valor "natural" que pone el juego (caminar, correr, Phase Walk...) y se
+# multiplica ese. Si el juego cambia la velocidad, se toma el nuevo valor como natural.
+TOPE_NATURAL = {"GroundSpeed": 4.0, "JumpZ": 1.5}  # máximo "normal" respecto al valor de fábrica
+_mov: dict[str, dict[str, float]] = {}  # por pawn: valores naturales y aplicados
+
+
+def _ajustar(pawn: UObject, prop: str, mult: float) -> None:
+    d = _mov.setdefault(pawn._path_name(), {})
+    actual = float(getattr(pawn, prop))
+    if d.get("apl_" + prop) is None or abs(actual - d["apl_" + prop]) > 1:
+        # el juego lo cambió (o es la primera vez); tope de seguridad contra acumulación
+        base = float(getattr(pawn.Class.ClassDefaultObject, prop))
+        tope = base * (TOPE_NATURAL[prop]) if base > 0 else actual
+        d["nat_" + prop] = min(actual, tope)
+    deseado = d["nat_" + prop] * mult
+    if abs(actual - deseado) > 0.5:
+        setattr(pawn, prop, deseado)
+    d["apl_" + prop] = deseado
+
+
+def _restaurar(pawn: UObject) -> None:
+    d = _mov.get(pawn._path_name(), {})
+    for prop in ("GroundSpeed", "JumpZ"):
+        try:
+            if d.get("nat_" + prop) is not None and abs(float(getattr(pawn, prop)) - d["apl_" + prop]) <= 1:
+                setattr(pawn, prop, d["nat_" + prop])
+        except Exception:
+            pass
+
+
+def _revisar_mapa(pc: UObject) -> None:
+    """Los nombres internos (WillowAIPawn_N...) se repiten en cada mapa: se limpian las listas."""
+    try:
+        wi = pc.WorldInfo
+        mapa = str(wi.GetMapName(True))
+        t = float(wi.TimeSeconds)
+    except Exception:
+        return
+    if mapa != _estado.get("mapa") or t < _estado.get("t", 0.0):
+        _jefes_hechos.clear()
+        _cofres_hechos.clear()
+        if _estado.get("mapa") is not None:
+            log(f"Mapa: {mapa}", consola=True)
+        _estado["mapa"] = mapa
+    _estado["t"] = t
 
 
 @hook("WillowGame.WillowPlayerController:PlayerTick", Type.POST)
 def on_tick(obj: UObject, _a: WrappedStruct, _r: Any, _f: BoundFunction) -> None:
+    _revisar_mapa(obj)
     pawn = obj.Pawn
-    if pawn is None:
+    # Solo el personaje: nunca el vehículo (si no, se acumulaba al subir y bajar)
+    if pawn is None or "Vehicle" in pawn.Class.Name:
         return
     try:
-        base = pawn.Class.ClassDefaultObject
-        if (pawn is not _estado["pawn"] or _estado["vel"] != op_vel.value
-                or _estado["salto"] != op_salto.value
-                or abs(pawn.GroundSpeed - base.GroundSpeed * op_vel.value) > 1):
-            _aplicar_movimiento(pawn)
+        if pawn is not _estado["pawn"]:
+            if len(_mov) > 50:
+                _mov.clear()
+            _estado["pawn"] = pawn
+        _ajustar(pawn, "GroundSpeed", op_vel.value)
+        _ajustar(pawn, "JumpZ", op_salto.value)
     except Exception as e:
         log(f"ERROR movimiento: {e!r}")
 
@@ -120,34 +163,169 @@ def _naranja_de(ruta: str, contexto: UObject, nivel: int) -> UObject | None:
     return mejor
 
 
-def _soltar(item: UObject, lugar: UObject, alto: float = 60) -> None:
+def _naranja_segura(ruta: str, contexto: UObject, nivel: int) -> UObject | None:
+    """A nivel bajo el juego no fabrica naranjas: se sube el nivel del arma hasta lograrlo."""
+    for extra in (0, 3, 6, 10, 15, 20, 30, 40, 50):
+        n = min(nivel + extra, 80)
+        arma = _naranja_de(ruta, contexto, n)
+        if arma is not None:
+            if extra:
+                log(f"Sin naranja a nivel {nivel}; lograda a nivel {n}", consola=True)
+            return arma
+        if n >= 80:
+            break
+    log(f"ERROR: no salió ninguna naranja (nivel {nivel})")
+    return None
+
+
+def _jugador_pawn() -> UObject | None:
+    try:
+        for pc in unrealsdk.find_all("WillowPlayerController", exact=False):
+            if pc.Pawn is not None:
+                return pc.Pawn
+    except Exception:
+        pass
+    return None
+
+
+def _soltar(item: UObject, lugar: UObject, alto: float = 40, hacia_jugador: float = 0) -> None:
+    """Suelta el ítem casi quieto; opcionalmente corrido hacia el jugador (fuera del cofre)."""
     loc = lugar.Location
-    item.DropFrom(unrealsdk.make_struct("Vector", X=loc.X, Y=loc.Y, Z=loc.Z + alto),
-                  unrealsdk.make_struct("Vector", X=0, Y=0, Z=250))
+    x, y = loc.X, loc.Y
+    pj = _jugador_pawn() if hacia_jugador else None
+    if pj is not None:
+        dx, dy = pj.Location.X - x, pj.Location.Y - y
+        d = (dx * dx + dy * dy) ** 0.5
+        if d > 1:
+            paso = min(hacia_jugador, d * 0.5)
+            x, y = x + dx / d * paso, y + dy / d * paso
+    item.DropFrom(unrealsdk.make_struct("Vector", X=x, Y=y, Z=loc.Z + alto),
+                  unrealsdk.make_struct("Vector", X=0, Y=0, Z=120))
 
 
 # ---------------------------------------------------------------- jefes
 JEFES = ("ninetoes", "nine_toes", "baronflynt", "flynt", "sledge", "krom", "reaver",
          "destroyer", "commandant", "steele", "tobbs", "mrshaw", "mr_shaw", "kobb", "henry",
          "rakkman", "lockjaw", "pinky", "digit", "crawmerax", "knoxx", "ned", "skagzilla", "scar",
-         "bleeder", "moe", "marley", "weewee", "queen", "rakkhive", "rakkinishu", "slither", "mothrakk")
+         "bleeder", "moe", "marley", "weewee", "queen", "rakkhive", "rakkinishu", "slither", "mothrakk", "vaultboss", "mccloud", "bonehead", "madmel")
 
 
-def _es_jefe(pawn: UObject) -> bool:
-    try:
-        if pawn.IsBoss():
-            return True
-    except Exception:
-        pass
-    nombre = pawn._path_name().lower()
+NO_JEFES = ("kamikaze", "spawn", "minion", "npc")
+
+
+def _balance(pawn: UObject) -> str:
     try:
         bal = pawn.BalanceDefinitionState.BalanceDefinition
         if bal:
-            nombre += " " + bal._path_name().lower()
+            return bal._path_name().lower()
     except Exception:
         pass
-    plano = nombre.replace("_", "")
-    return any(j.replace("_", "") in plano for j in JEFES)
+    return ""
+
+
+def _es_jefe(pawn: UObject) -> bool:
+    bal = _balance(pawn)
+    if not bal:
+        return False
+    corto = bal.rsplit(".", 1)[-1].replace("_", "")  # solo el nombre, no el paquete
+    if any(n in corto for n in NO_JEFES):
+        return False
+    if ".named." in bal:  # jefes con nombre (Sledge, Kobb, Flynt...)
+        return True
+    return any(j.replace("_", "") in corto for j in JEFES)
+
+
+# ---------------------------------------------------------------- arma única del jefe
+GENERICAS = ("weaponpools", "ammo", "money", "health", "shield", "grenade", "artifact",
+             "classmod", "enemyuse", "itempools.loot")
+
+
+def _bolsas_de(obj: UObject | None, prof: int = 0, vistos: set | None = None) -> list[UObject]:
+    """Busca bolsas de botín (ItemPoolDefinition) dentro del balance/arquetipo del jefe."""
+    vistos = set() if vistos is None else vistos
+    res: list[UObject] = []
+
+    def ver(v: Any, pr: int) -> None:
+        if pr > 4:
+            return
+        if isinstance(v, UObject):
+            if v.Class.Name == "ItemPoolDefinition":
+                if v._path_name() not in vistos:
+                    vistos.add(v._path_name())
+                    res.append(v)
+            elif pr < 2 and ("Balance" in v.Class.Name or "Pawn" in v.Class.Name) and v._path_name() not in vistos:
+                vistos.add(v._path_name())
+                for f in v.Class._fields():
+                    try:
+                        ver(getattr(v, f.Name), pr + 1)
+                    except Exception:
+                        pass
+        elif isinstance(v, WrappedStruct):
+            for f in v._type._fields():
+                try:
+                    ver(getattr(v, f.Name), pr + 1)
+                except Exception:
+                    pass
+        elif not isinstance(v, (str, bytes, int, float, bool)) and v is not None:
+            try:
+                for x in v:
+                    ver(x, pr + 1)
+            except TypeError:
+                pass
+
+    ver(obj, prof)
+    return res
+
+
+def _bolsas_unicas(pawn: UObject) -> list[UObject]:
+    bolsas: list[UObject] = []
+    vistos: set = set()
+    try:
+        bolsas += _bolsas_de(pawn.BalanceDefinitionState.BalanceDefinition, 0, vistos)
+    except Exception:
+        pass
+    try:
+        bolsas += _bolsas_de(pawn.ObjectArchetype, 0, vistos)
+    except Exception:
+        pass
+    unicas = []
+    for b in bolsas:
+        ruta = b._path_name().lower()
+        if any(g in ruta for g in GENERICAS):
+            continue
+        armas = False
+        try:
+            for it in b.BalancedItems:
+                inv = it.InvBalanceDefinition
+                if inv is not None and "weap" in inv._path_name().lower():
+                    armas = True
+                    break
+        except Exception:
+            pass
+        if armas or "customweap" in ruta:
+            unicas.append(b)
+    return unicas
+
+
+def _mejor_de(bolsa: UObject, contexto: UObject, nivel: int, intentos: int = 60) -> UObject | None:
+    mejor, mejor_r = None, -1
+    _estado["generando"] = True
+    try:
+        for _ in range(intentos):
+            for it in _generar_una_vez(bolsa, contexto, nivel):
+                if "Weapon" not in it.Class.Name:
+                    it.Destroy()
+                    continue
+                r = int(getattr(it, "RarityLevel", 0))
+                if r > mejor_r:
+                    if mejor is not None:
+                        mejor.Destroy()
+                    mejor, mejor_r = it, r
+                else:
+                    it.Destroy()
+    finally:
+        _estado["generando"] = False
+    return mejor
 
 
 def _muerte(pawn: UObject) -> None:
@@ -157,10 +335,32 @@ def _muerte(pawn: UObject) -> None:
     _jefes_hechos.add(clave)
     if len(_jefes_hechos) > 500:
         _jefes_hechos.clear()
-    arma = _naranja_de(BOLSA_ARMAS, pawn, _nivel_jugador(int(pawn.GetExpLevel())))
+    ctx = _jugador_pawn() or pawn
+    nivel = _nivel_jugador(int(pawn.GetExpLevel()))
+    arma, tipo = None, "legendaria al azar"
+    try:
+        unicas = _bolsas_unicas(pawn)
+        log(f"  bolsas únicas: {[u._path_name() for u in unicas]}")
+        for u in unicas:
+            arma = _mejor_de(u, ctx, nivel)
+            if arma is not None:
+                tipo = f"arma única ({u._path_name()})"
+                break
+    except Exception as e:
+        log(f"ERROR arma única: {e!r}")
+    if arma is None:
+        arma = _naranja_segura(BOLSA_ARMAS, ctx, nivel)
     if arma is not None:
-        _soltar(arma, pawn)
-        log(f"Jefe {clave}: arma legendaria", consola=True)
+        pj = _jugador_pawn()
+        lugar = pawn
+        if pj is not None:
+            a, b = pj.Location, pawn.Location
+            if ((a.X - b.X) ** 2 + (a.Y - b.Y) ** 2 + (a.Z - b.Z) ** 2) ** 0.5 > 1200:
+                lugar = pj  # jefe lejos, en el aire o en lugar raro: el arma va junto al jugador
+        _soltar(arma, lugar, alto=50, hacia_jugador=0 if lugar is pj else 90)
+        log(f"Jefe {clave}: {tipo}", consola=True)
+    else:
+        log(f"ERROR: jefe {clave} sin arma", consola=True)
 
 
 @hook("WillowGame.WillowAIPawn:Died", Type.POST)
@@ -206,10 +406,10 @@ def on_attach(obj: UObject, args: WrappedStruct, _r: Any, _f: BoundFunction) -> 
         if clave in _cofres_hechos:
             return
         _cofres_hechos.add(clave)
-        nivel = int(inv.ExpLevel) if getattr(inv, "ExpLevel", 0) else _nivel_jugador()
-        arma = _naranja_de(BOLSA_ARMAS, cofre, nivel)
+        nivel = _nivel_jugador(int(getattr(inv, "ExpLevel", 0) or 1))
+        arma = _naranja_segura(BOLSA_ARMAS, cofre, nivel)
         if arma is not None:
-            _soltar(arma, cofre, alto=100)
+            _soltar(arma, cofre, alto=50, hacia_jugador=90)
             log(f"Cofre {clave}: arma legendaria", consola=True)
     except Exception as e:
         log(f"ERROR cofre: {e!r}")
@@ -289,12 +489,9 @@ def on_combate(obj: UObject, args: WrappedStruct, _r: Any, _f: BoundFunction) ->
 def _al_desactivar() -> None:
     p = _estado["pawn"]
     if p is not None:
-        try:
-            base = p.Class.ClassDefaultObject
-            p.GroundSpeed, p.JumpZ = base.GroundSpeed, base.JumpZ
-        except Exception:
-            pass
+        _restaurar(p)
     _estado["pawn"] = None
+    _mov.clear()
 
 
 build_mod(options=[op_vel, op_salto, op_xp, op_xp_general], on_disable=_al_desactivar)

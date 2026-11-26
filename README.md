@@ -11,7 +11,7 @@
 A mod for **Borderlands Game of the Year Enhanced** made with the [willow1 Python SDK](https://github.com/bl-sdk/willow1-mod-manager).
 
 ### Features
-- **Guaranteed legendary from bosses:** every boss drops one orange weapon, on top of its normal loot.
+- **Boss drops:** every boss drops its own unique weapon (best roll) when it has one, otherwise a guaranteed orange weapon, on top of its normal loot.
 - **Legendary from weapon chests:** every chest that contains weapons drops one orange weapon on top of it.
 - **Speed multiplier:** 1x to 3x (default 2x).
 - **Jump multiplier:** 1x to 3x (default 3x).
@@ -67,3 +67,15 @@ WINEDLLOVERRIDES="dinput8=n,b" %command% -pf_tricks=vcrun2022
 ---
 
 MIT License © 2026 Angel
+
+## Changelog
+
+**1.0.1**
+- Sprint and Lilith's Phase Walk now keep their speed boost (the speed multiplier is applied on top of the game's own speed).
+- Disabling the mod in-game restores the real default jump height and speed.
+- Chest legendaries no longer bounce around; they drop gently in front of the chest.
+- Bosses drop their own unique weapon when they have one.
+- Better boss detection (named bosses, Master McCloud, the Destroyer); boss minions no longer count as bosses.
+- Fixed bosses and chests sometimes giving nothing after changing maps.
+- At low levels, where the game cannot roll orange weapons, the legendary is rolled a few levels higher.
+- Vehicles are no longer affected by the speed/jump multipliers.

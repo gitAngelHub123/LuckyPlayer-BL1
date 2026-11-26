@@ -1,6 +1,6 @@
 [project]
 name = "LuckyPlayer"
-version = "1.0.0"
+version = "1.0.1"
 description = "Guaranteed legendary weapon from every boss and every weapon chest, plus speed, jump and XP multipliers."
 authors = [{ name = "Angel" }]
 license = "MIT"
