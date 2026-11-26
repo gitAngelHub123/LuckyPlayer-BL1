@@ -1,0 +1,6 @@
+sdk_descarga/
+release/*.sdkmod
+release/*.zip
+registro.txt
+__pycache__/
+instalado_antes_respaldo/
