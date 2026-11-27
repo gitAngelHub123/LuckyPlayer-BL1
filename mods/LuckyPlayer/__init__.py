@@ -211,6 +211,9 @@ JEFES = ("ninetoes", "nine_toes", "baronflynt", "flynt", "sledge", "krom", "reav
 
 
 NO_JEFES = ("kamikaze", "spawn", "minion", "npc")
+# Enemigos comunes cuyo nombre termina igual que un jefe de la lista (auditoría de todos los balances):
+# las rakk que suelta el Destructor y la Reina arácnida genérica (la jefa es Queen Tarantella).
+NO_JEFES_FINAL = ("rakkvaultboss", "spiderantqueen", "spiderant-trapqueen")
 
 
 def _balance(pawn: UObject) -> str:
@@ -228,7 +231,7 @@ def _es_jefe(pawn: UObject) -> bool:
     if not bal:
         return False
     corto = bal.rsplit(".", 1)[-1].replace("_", "")  # solo el nombre, no el paquete
-    if any(n in corto for n in NO_JEFES):
+    if any(n in corto for n in NO_JEFES) or corto.endswith(NO_JEFES_FINAL):
         return False
     if ".named." in bal:  # jefes con nombre (Sledge, Kobb, Flynt...)
         return True
@@ -297,7 +300,9 @@ def _bolsas_unicas(pawn: UObject) -> list[UObject]:
         try:
             for it in b.BalancedItems:
                 inv = it.InvBalanceDefinition
-                if inv is not None and "weap" in inv._path_name().lower():
+                # Solo armas únicas (CustomWeap); las bolsas "ItemGrade_*" son armas genéricas
+                # y daban un arma común en vez de legendaria (Franz, MINAC, D-Fault...).
+                if inv is not None and "customweap" in inv._path_name().lower():
                     armas = True
                     break
         except Exception:

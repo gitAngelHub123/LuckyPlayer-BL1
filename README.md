@@ -70,6 +70,11 @@ MIT License © 2026 Angel
 
 ## Changelog
 
+**1.0.2**
+- Bosses always drop a legendary: named enemies whose "own" loot was only generic weapons (Franz, MINAC, D-Fault, Midget Lance...) now drop a random legendary instead of a common gun.
+- Common enemies no longer count as bosses: the Rakk spawned during the Destroyer fight and the regular Spiderant Queen (Queen Tarantella still counts).
+- Checked every enemy of the base game and the 4 DLCs (Zombie Island, Moxxi, Knoxx, Claptrap).
+
 **1.0.1**
 - Sprint and Lilith's Phase Walk now keep their speed boost (the speed multiplier is applied on top of the game's own speed).
 - Disabling the mod in-game restores the real default jump height and speed.
